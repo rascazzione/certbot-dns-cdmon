@@ -1,7 +1,3 @@
-A continuación, se presenta una versión actualizada y ampliada del manual (README) orientada a usuarios novatos, con instrucciones paso a paso y una sección ampliada de solución de problemas:
-
----
-
 # Certbot DNS CDmon Plugin
 
 Plugin de autenticación DNS para Certbot que utiliza la API de CDmon para resolver el desafío dns-01, ideal para obtener certificados Wildcard.
