@@ -1,0 +1,29 @@
+Metadata-Version: 2.1
+Name: certbot-dns-cdmon
+Version: 0.1.0
+Summary: CDmon DNS Authenticator plugin for Certbot
+Home-page: https://github.com/yourusername/certbot-dns-cdmon
+Author: Your Name
+Author-email: your.email@example.com
+License: Apache License 2.0
+Classifier: Development Status :: 3 - Alpha
+Classifier: Environment :: Plugins
+Classifier: Intended Audience :: System Administrators
+Classifier: License :: OSI Approved :: Apache Software License
+Classifier: Operating System :: POSIX :: Linux
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.6
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Topic :: Internet :: WWW/HTTP
+Classifier: Topic :: Security
+Classifier: Topic :: System :: Installation/Setup
+Classifier: Topic :: System :: Networking
+Classifier: Topic :: System :: Systems Administration
+Classifier: Topic :: Utilities
+Requires-Python: >=3.6
+Requires-Dist: certbot>=1.1.0
+Requires-Dist: setuptools>=41.6.0
+Requires-Dist: requests

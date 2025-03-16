@@ -1,0 +1,3 @@
+certbot>=1.1.0
+setuptools>=41.6.0
+requests

@@ -1,0 +1,2 @@
+[certbot.plugins]
+dns-cdmon = certbot_dns_cdmon.dns_cdmon:Authenticator
