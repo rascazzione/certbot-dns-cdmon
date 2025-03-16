@@ -62,16 +62,16 @@ class Authenticator(dns_common.DNSAuthenticator):
             logger.warning(f"Error cleaning up TXT record: {e}")
 
     def _get_cdmon_subdomain(self, validation_name):
-        """
-        Extract the subdomain from the validation name.
-        """
         domain = self.credentials.conf("domain")
         if validation_name.endswith(domain):
-            subdomain = validation_name[:-len(domain)-1]  # Remove domain and dot
+            subdomain = validation_name[:-len(domain)-1]  # Remueve el dominio y el punto
+            if subdomain == "_acme-challenge":
+                return ""
             if subdomain.endswith("_acme-challenge."):
                 subdomain = subdomain[:-len("_acme-challenge.")]
             return subdomain
-        return "_acme-challenge"
+        return ""
+
 
     def _create_txt_record(self, subdomain, validation):
         """

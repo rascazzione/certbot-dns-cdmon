@@ -1,5 +1,9 @@
+LICENSE
 README.md
 setup.py
+certbot_dns_cdmon/__init__.py
+certbot_dns_cdmon/dns_cdmon.py
+certbot_dns_cdmon/dns_cdmon_test.py
 certbot_dns_cdmon.egg-info/PKG-INFO
 certbot_dns_cdmon.egg-info/SOURCES.txt
 certbot_dns_cdmon.egg-info/dependency_links.txt

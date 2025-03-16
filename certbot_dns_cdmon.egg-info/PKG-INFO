@@ -24,6 +24,7 @@ Classifier: Topic :: System :: Networking
 Classifier: Topic :: System :: Systems Administration
 Classifier: Topic :: Utilities
 Requires-Python: >=3.6
+License-File: LICENSE
 Requires-Dist: certbot>=1.1.0
 Requires-Dist: setuptools>=41.6.0
 Requires-Dist: requests
