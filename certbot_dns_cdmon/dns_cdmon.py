@@ -65,10 +65,11 @@ class Authenticator(dns_common.DNSAuthenticator):
         domain = self.credentials.conf("domain")
         if validation_name.endswith(domain):
             subdomain = validation_name[:-len(domain)-1]  # Remueve el dominio y el punto
-            if subdomain == "_acme-challenge":
-                return ""
-            if subdomain.endswith("_acme-challenge."):
-                subdomain = subdomain[:-len("_acme-challenge.")]
+            # Si empieza con '_acme-challenge.' se elimina ese prefijo
+            if subdomain.startswith("_acme-challenge."):
+                subdomain = subdomain[len("_acme-challenge."):]
+            elif subdomain == "_acme-challenge":
+                subdomain = ""
             return subdomain
         return ""
 
@@ -80,8 +81,11 @@ class Authenticator(dns_common.DNSAuthenticator):
         api_key = self.credentials.conf("api_key")
         domain = self.credentials.conf("domain")
         
-        # Format the subdomain and value for CDmon API
-        acme_subdomain = f"_acme-challenge.{subdomain}" if subdomain else "_acme-challenge"
+        if subdomain == "_acme-challenge":
+            acme_subdomain = "_acme-challenge"
+        else:
+            acme_subdomain = f"_acme-challenge.{subdomain}" if subdomain else "_acme-challenge"
+        
         txt_value = f'"{validation}"'
         
         # Check if record already exists
