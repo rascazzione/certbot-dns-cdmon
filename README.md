@@ -22,7 +22,7 @@ Este plugin automatiza el proceso de completar un desafío dns-01 creando y elim
 
 ## Instalación
 
-### Desde PyPI
+### Desde PyPI (actualmente en construcción, usar instalación en Código Fuente)
 
 Instala el plugin directamente con pip:
 
@@ -73,6 +73,7 @@ dns_cdmon_domain = tudominio.com
 
 - No uses comillas alrededor de los valores.
 - Asegúrate de que el archivo tenga permisos restrictivos para proteger tu clave:
+
   ```bash
   chmod 600 /etc/letsencrypt/cdmon-credentials.ini
   ```
@@ -123,7 +124,9 @@ sudo /home/tu_usuario/miniconda3/envs/certbot-env/bin/certbot certonly \
 
 ## Renovación automática
 
-Una vez obtenido el certificado, Certbot recordará el plugin utilizado. La renovación automática se realizará sin necesidad de reconfigurar el plugin.
+Una vez obtenido el certificado, Certbot recordará el plugin utilizado. La renovación automática se realizará sin necesidad de reconfigurar el plugin. Pero recuerda que la deberás configurar siguiendo las instrucciones:
+
+Certbot can automatically renew the certificate in the background, but you may need to take steps to enable that functionality. See https://certbot.org/renewal-setup for instructions.
 
 ---
 
