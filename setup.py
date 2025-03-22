@@ -1,7 +1,7 @@
 from setuptools import setup
 from setuptools import find_packages
 
-version = '0.1.0'
+version = '0.3.0'
 
 install_requires = [
     'certbot>=1.1.0',
@@ -13,9 +13,9 @@ setup(
     name='certbot-dns-cdmon',
     version=version,
     description="CDmon DNS Authenticator plugin for Certbot",
-    url='https://github.com/yourusername/certbot-dns-cdmon',
-    author="Your Name",
-    author_email='your.email@example.com',
+    url='https://github.com/rascazzione/certbot-dns-cdmon',
+    author="rascazzione",
+    author_email='rascazzione@example.com',
     license='Apache License 2.0',
     python_requires='>=3.6',
     classifiers=[

@@ -10,6 +10,17 @@ Este plugin automatiza el proceso de completar un desafío dns-01 creando y elim
 
 ---
 
+## Características
+
+- Creación y eliminación automática de registros TXT para validación ACME
+- Soporte para dominios y subdominios múltiples
+- **Detección automática de dominios** - No es necesario especificar el dominio en el archivo de credenciales
+- Manejo de reintentos automáticos para solicitudes a la API
+- Validación robusta de credenciales y respuestas de la API
+- Logging detallado para facilitar la depuración
+
+---
+
 ## Requisitos
 
 - **Certbot**: versión ≥ 1.1.0 (compatible con 3.3.0 y posteriores)
@@ -36,7 +47,7 @@ Si deseas clonar el repositorio y probar o modificar el código:
 
 1. Clona el repositorio:
    ```bash
-   git clone https://github.com/yourusername/certbot-dns-cdmon.git
+   git clone https://github.com/rascazzione/certbot-dns-cdmon.git
    cd certbot-dns-cdmon
    ```
 2. Instala el plugin en modo editable:
@@ -66,11 +77,15 @@ Crea un archivo INI con tus credenciales. Por ejemplo, en `/etc/letsencrypt/cdmo
 
 ```ini
 dns_cdmon_api_key = tu_clave_api_de_cdmon
-dns_cdmon_domain = tudominio.com
 ```
 
 **Importante:**
 
+- El parámetro `dns_cdmon_domain` ahora es **opcional**. El plugin detectará automáticamente el dominio base a partir de los dominios que estás validando.
+- Si deseas especificar manualmente el dominio base (por ejemplo, si la detección automática no funciona correctamente), puedes añadir:
+  ```ini
+  dns_cdmon_domain = tudominio.com
+  ```
 - No uses comillas alrededor de los valores.
 - Asegúrate de que el archivo tenga permisos restrictivos para proteger tu clave:
 
@@ -95,6 +110,8 @@ certbot certonly \
   -d example.com \
   -d *.example.com
 ```
+
+El plugin detectará automáticamente que `example.com` es el dominio base y lo utilizará para las operaciones con la API de CDmon.
 
 Si usas un entorno virtual (por ejemplo, Conda) y no deseas usar `sudo`, puedes especificar directorios de configuración, trabajo y logs que sean escribibles:
 
@@ -165,6 +182,50 @@ certbot certonly \
   -d app.example.com
 ```
 
+### Certificado para múltiples dominios diferentes
+
+Ahora puedes usar el mismo archivo de credenciales para validar diferentes dominios:
+
+```bash
+# Primer dominio
+certbot certonly \
+  --authenticator dns-cdmon \
+  --dns-cdmon-credentials /etc/letsencrypt/cdmon-credentials.ini \
+  --dns-cdmon-propagation-seconds 180 \
+  -d example.com \
+  -d *.example.com
+
+# Segundo dominio (usando el mismo archivo de credenciales)
+certbot certonly \
+  --authenticator dns-cdmon \
+  --dns-cdmon-credentials /etc/letsencrypt/cdmon-credentials.ini \
+  --dns-cdmon-propagation-seconds 180 \
+  -d otrodominio.com \
+  -d *.otrodominio.com
+```
+
+---
+
+## Funcionamiento interno
+
+El plugin realiza las siguientes operaciones:
+
+1. **Validación de credenciales**: Verifica que la clave API esté configurada correctamente.
+2. **Detección automática de dominios**: 
+   - Analiza los dominios que se están validando para determinar el dominio base.
+   - Si se proporciona `dns_cdmon_domain` en el archivo de credenciales, lo utiliza como referencia.
+   - Si no se proporciona, detecta automáticamente el dominio base a partir de los parámetros de certbot.
+3. **Extracción de subdominios**: Procesa el nombre de validación para extraer el subdominio correcto.
+   - Por ejemplo, si el nombre de validación es `_acme-challenge.sub.example.com`, el plugin extraerá `sub` como subdominio.
+4. **Creación de registros TXT**: 
+   - Verifica si ya existe un registro TXT para el desafío ACME.
+   - Si existe, actualiza su valor.
+   - Si no existe, crea un nuevo registro.
+5. **Manejo de reintentos**: Implementa reintentos automáticos para las solicitudes a la API en caso de errores temporales.
+6. **Limpieza**: Elimina los registros TXT una vez completada la validación.
+
+El plugin utiliza el prefijo `_acme-challenge` para los registros TXT, siguiendo el estándar ACME para validación DNS.
+
 ---
 
 ## Solución de problemas
@@ -202,31 +263,52 @@ Aquí se listan algunos problemas comunes y sus soluciones:
 
 ### 3. Credenciales mal configuradas
 
-- **Error:** "Missing properties in credentials configuration file..."
-- **Causa:** El archivo INI de credenciales no contiene los nombres de propiedad esperados.
+- **Error:** "Missing properties in credentials configuration file..." o "CDmon API key is required."
+- **Causa:** El archivo INI de credenciales no contiene los nombres de propiedad esperados o los valores están vacíos.
 - **Solución:** Asegúrate de que el archivo tenga el siguiente formato (sin comillas):
   ```ini
   dns_cdmon_api_key = tu_clave_api_de_cdmon
-  dns_cdmon_domain = tudominio.com
   ```
   Y establece los permisos correctos:
   ```bash
   chmod 600 /ruta/al/archivo/cdmon-credentials.ini
   ```
 
-### 4. Tiempo de propagación insuficiente
+### 4. Problemas con la detección automática de dominios
+
+- **Error:** "Could not determine base domain for X" o problemas al crear registros DNS.
+- **Causa:** El plugin no pudo detectar automáticamente el dominio base a partir de los dominios que se están validando.
+- **Solución:** 
+  - Especifica manualmente el dominio base en el archivo de credenciales:
+    ```ini
+    dns_cdmon_api_key = tu_clave_api_de_cdmon
+    dns_cdmon_domain = tudominio.com
+    ```
+  - Asegúrate de que los dominios que estás validando con `-d` sean dominios completos y correctos.
+  - Revisa los logs para obtener más información sobre el proceso de detección.
+
+### 5. Tiempo de propagación insuficiente
 
 - **Causa:** El registro DNS no se propaga completamente antes de que el servidor ACME verifique la existencia del registro TXT.
 - **Solución:** Incrementa el valor de `--dns-cdmon-propagation-seconds` (por ejemplo, 90 o superior). Si sigues teniendo problemas, verifica con herramientas externas (como [WhatsMyDNS](https://www.whatsmydns.net/)) que el registro se esté propagando correctamente.
 
-### 5. Problemas de conexión o autenticación con la API de CDmon
+### 6. Problemas de conexión o autenticación con la API de CDmon
 
 - **Causa:** La clave API puede ser incorrecta o la cuenta de CDmon no tiene los permisos necesarios.
 - **Solución:**  
   - Verifica en el panel de CDmon que la clave API es correcta y tiene permisos para gestionar registros DNS.
   - Revisa el log de Certbot (ubicado en `/var/log/letsencrypt/` o en el directorio de logs que hayas especificado) para obtener detalles adicionales.
+  - El plugin ahora implementa reintentos automáticos para errores temporales de red, pero si persisten los problemas, verifica tu conexión a Internet.
 
-### 6. Otros errores o dudas
+### 7. Errores en la respuesta de la API
+
+- **Causa:** La API de CDmon puede devolver errores por diversas razones (permisos insuficientes, límites de tasa, etc.).
+- **Solución:**
+  - Verifica los logs detallados para identificar el error específico.
+  - Asegúrate de que tienes permisos para gestionar registros DNS para el dominio que estás intentando validar.
+  - Comprueba en el panel de CDmon que tienes permisos para gestionar registros DNS para ese dominio.
+
+### 8. Otros errores o dudas
 
 - **Consejo:** Revisa el listado de plugins instalados con:
   ```bash
@@ -243,7 +325,7 @@ Aquí se listan algunos problemas comunes y sus soluciones:
 
 1. Clona el repositorio:
    ```bash
-   git clone https://github.com/yourusername/certbot-dns-cdmon.git
+   git clone https://github.com/rascazzione/certbot-dns-cdmon.git
    cd certbot-dns-cdmon
    ```
 2. Crea y activa un entorno virtual (por ejemplo, con venv):
@@ -268,6 +350,16 @@ Ejecuta la suite de tests para verificar que todo funcione correctamente:
 python -m unittest discover
 ```
 
+### Estructura del código
+
+El plugin está organizado de la siguiente manera:
+
+- `certbot_dns_cdmon/dns_cdmon.py`: Implementación principal del autenticador DNS.
+- `certbot_dns_cdmon/dns_cdmon_test.py`: Tests unitarios para verificar la funcionalidad.
+- `certbot_dns_cdmon/__init__.py`: Archivo de inicialización del paquete.
+
+El código sigue las mejores prácticas de Python y los estándares PEP 8 para estilo de código.
+
 ---
 
 ## Licencia
@@ -280,3 +372,22 @@ Este proyecto está licenciado bajo la [Licencia Apache 2.0](http://www.apache.o
 
 Las contribuciones son bienvenidas. Si deseas colaborar, por favor abre un issue o un pull request en GitHub.
 
+---
+
+## Changelog
+
+### v0.1.0
+- Implementación inicial del plugin
+
+### v0.2.0
+- Refactorización del código para eliminar duplicación
+- Mejora en el manejo de errores y validación de entradas
+- Implementación de reintentos automáticos para solicitudes a la API
+- Mejora en la cobertura de pruebas
+- Documentación ampliada
+
+### v0.3.0
+- Implementación de detección automática de dominios
+- El parámetro `dns_cdmon_domain` en el archivo de credenciales ahora es opcional
+- Mejora en la gestión de múltiples dominios con un solo archivo de credenciales
+- Actualización de la documentación para reflejar los cambios
