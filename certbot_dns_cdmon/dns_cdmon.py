@@ -1,6 +1,7 @@
 """CDmon DNS Authenticator."""
 import json
 import logging
+import os
 import time
 import requests
 from requests.adapters import HTTPAdapter
@@ -21,6 +22,10 @@ RETRY_BACKOFF_FACTOR = 0.5
 RETRY_STATUS_FORCELIST = [429, 500, 502, 503, 504]
 API_BASE_URL = "https://api-domains.cdmon.services/api-domains"
 
+# Nombres de variables de entorno específicos para evitar conflictos
+ENV_API_KEY = "API_KEY_CDMON"
+ENV_DOMAIN = "DOMAIN_CDMON"
+
 
 class Authenticator(dns_common.DNSAuthenticator):
     """DNS Authenticator for CDmon
@@ -36,6 +41,8 @@ class Authenticator(dns_common.DNSAuthenticator):
         self.credentials = None
         self._session = None
         self._domain_map = {}  # Mapeo de nombres de validación a dominios base
+        self._api_key = None   # Almacena la clave API para uso posterior
+        self._domain = None    # Almacena el dominio base opcional
         logger.debug("Inicializando autenticador CDmon DNS")
 
     @classmethod
@@ -65,6 +72,12 @@ class Authenticator(dns_common.DNSAuthenticator):
     def _setup_credentials(self):
         """Set up the credentials needed for the CDmon API."""
         logger.debug("Configurando credenciales para la API de CDmon")
+        
+        # Inicializar atributos para almacenar credenciales
+        self._api_key = None
+        self._domain = None
+        
+        # Intentar leer credenciales del archivo INI
         self.credentials = self._configure_credentials(
             "credentials",
             "CDmon API credentials INI file",
@@ -74,20 +87,41 @@ class Authenticator(dns_common.DNSAuthenticator):
                 "domain": "Base domain managed by CDmon (optional)",
             }
         )
+        
         # Validar que las credenciales no estén vacías
         self._validate_credentials()
         logger.info("Credenciales de CDmon configuradas correctamente")
 
     def _validate_credentials(self):
-        """Validate that the credentials are not empty."""
+        """Validate that the credentials are not empty and check for environment variables."""
+        # Intentar obtener la clave API del archivo de credenciales
         api_key = self.credentials.conf("api_key")
+        
+        # Si no está en el archivo, buscar en variables de entorno específicas para CDmon
+        if not api_key and ENV_API_KEY in os.environ:
+            api_key = os.environ[ENV_API_KEY]
+            logger.debug("Clave API obtenida de variable de entorno %s", ENV_API_KEY)
         
         logger.debug("Validando credenciales de CDmon")
         if not api_key:
             logger.error("Clave API de CDmon no proporcionada")
             raise errors.PluginError("CDmon API key is required.")
         
-        # El dominio ahora es opcional, no validamos su presencia
+        # Guardar la clave API para uso posterior
+        self._api_key = api_key
+        
+        # Intentar obtener el dominio del archivo de credenciales
+        domain = self.credentials.conf("domain")
+        
+        # Si no está en el archivo, buscar en variables de entorno específicas para CDmon
+        if not domain and ENV_DOMAIN in os.environ:
+            domain = os.environ[ENV_DOMAIN]
+            logger.debug("Dominio obtenido de variable de entorno %s", ENV_DOMAIN)
+        
+        # El dominio sigue siendo opcional
+        if domain:
+            self._domain = domain
+        
         logger.debug("Credenciales de CDmon validadas correctamente")
 
     def _get_http_session(self):
@@ -193,8 +227,8 @@ class Authenticator(dns_common.DNSAuthenticator):
         if validation_name in self._domain_map:
             return self._domain_map[validation_name]
             
-        # Intentar obtener el dominio de las credenciales
-        config_domain = self.credentials.conf("domain")
+        # Intentar obtener el dominio de las credenciales (ahora almacenado en self._domain)
+        config_domain = self._domain
         if config_domain and validation_name.endswith(config_domain):
             logger.debug(
                 "Usando dominio de configuración: %s para %s",
@@ -205,95 +239,41 @@ class Authenticator(dns_common.DNSAuthenticator):
             
         # Si no está en las credenciales, intentar detectarlo del nombre de validación
         # Primero, eliminar el prefijo _acme-challenge si está presente
-        clean_name = validation_name
-        if clean_name.startswith(f"{ACME_CHALLENGE_PREFIX}."):
-            clean_name = clean_name[len(f"{ACME_CHALLENGE_PREFIX}."):]
+        name_parts = validation_name.split(".")
+        if name_parts[0] == ACME_CHALLENGE_PREFIX:
+            name_parts = name_parts[1:]
             
-        # Intentar encontrar el dominio base analizando el nombre de validación
-        parts = clean_name.split('.')
-        
-        # Probar diferentes combinaciones de partes como dominio base
-        # Empezamos con el dominio completo y vamos quitando subdominios
-        for i in range(len(parts) - 1):
-            potential_domain = '.'.join(parts[i:])
-            
-            # Si el dominio que estamos validando es parte del potencial dominio base
-            if domain.endswith(potential_domain):
-                logger.info(
+        # Intentar diferentes combinaciones de partes del nombre para encontrar el dominio base
+        for i in range(len(name_parts) - 1):
+            possible_domain = ".".join(name_parts[i:])
+            if possible_domain == domain or domain.endswith("." + possible_domain):
+                logger.debug(
                     "Dominio base detectado automáticamente: %s para %s",
-                    potential_domain, validation_name
+                    possible_domain, validation_name
                 )
-                self._domain_map[validation_name] = potential_domain
-                return potential_domain
+                self._domain_map[validation_name] = possible_domain
+                return possible_domain
                 
         # Si llegamos aquí, no pudimos detectar el dominio base
-        if config_domain:
-            # Usar el dominio de configuración como último recurso
-            logger.warning(
-                "No se pudo detectar automáticamente el dominio base para %s, "
-                "usando dominio de configuración: %s",
-                validation_name, config_domain
-            )
-            self._domain_map[validation_name] = config_domain
-            return config_domain
-        else:
-            # No tenemos dominio base, intentar usar el dominio que se está validando
-            logger.warning(
-                "No se pudo detectar automáticamente el dominio base para %s, "
-                "intentando usar el dominio que se está validando: %s",
-                validation_name, domain
-            )
-            self._domain_map[validation_name] = domain
-            return domain
-
-    def _get_cdmon_subdomain(self, validation_name):
-        """Extract the subdomain from the validation name.
-
-        Args:
-            validation_name: The full domain name for validation.
-
-        Returns:
-            str: The extracted subdomain without the ACME challenge prefix.
-        """
-        # Obtener el dominio base para este nombre de validación
-        domain = self._get_base_domain_for_validation(validation_name)
-        
-        logger.debug(
-            "Extrayendo subdominio de %s (dominio base: %s)",
-            validation_name, domain
+        logger.error(
+            "No se pudo determinar el dominio base para %s", validation_name
         )
-        
-        if not validation_name.endswith(domain):
-            logger.warning(
-                "El nombre de validación %s no termina con el dominio %s",
-                validation_name, domain
-            )
-            return ""
-            
-        # Extraer el subdominio quitando el dominio base y el punto
-        subdomain = validation_name[:-len(domain)-1]
-        logger.debug("Subdominio extraído (con prefijo): '%s'", subdomain)
-        
-        # Quitar el prefijo _acme-challenge si está presente
-        if subdomain.startswith(f"{ACME_CHALLENGE_PREFIX}."):
-            subdomain = subdomain[len(f"{ACME_CHALLENGE_PREFIX}."):]
-        elif subdomain == ACME_CHALLENGE_PREFIX:
-            subdomain = ""
-            
-        logger.debug("Subdominio final (sin prefijo): '%s'", subdomain)
-        return subdomain
+        raise errors.PluginError(
+            f"Could not determine base domain for {validation_name}. "
+            f"Please specify the domain in the credentials file or environment variable {ENV_DOMAIN}."
+        )
 
     def _get_base_domain_for_validation(self, validation_name):
         """Get the base domain for a validation name.
         
-        This method returns the base domain that should be used with the CDmon API
-        for a specific validation name.
+        This method returns the base domain for a validation name, either from
+        the domain map or by detecting it.
         
         Args:
             validation_name: The name of the DNS record to create/delete.
             
         Returns:
-            str: The base domain to use.
+            str: The base domain.
             
         Raises:
             errors.PluginError: If the base domain cannot be determined.
@@ -302,344 +282,359 @@ class Authenticator(dns_common.DNSAuthenticator):
         if validation_name in self._domain_map:
             return self._domain_map[validation_name]
             
-        # Si no lo tenemos, intentar obtenerlo de las credenciales
-        config_domain = self.credentials.conf("domain")
-        if config_domain:
-            self._domain_map[validation_name] = config_domain
-            return config_domain
-            
-        # Si no tenemos el dominio base, no podemos continuar
+        # Si no está en el mapa, intentar detectarlo
         logger.error(
-            "No se pudo determinar el dominio base para %s. "
-            "Debe especificar el dominio en el archivo de credenciales o "
-            "ejecutar _perform primero para detectarlo automáticamente.",
+            "No se encontró el dominio base para %s en el mapa de dominios", 
             validation_name
         )
         raise errors.PluginError(
-            f"Could not determine base domain for {validation_name}. "
-            "Please specify the domain in the credentials file or "
-            "run _perform first to auto-detect it."
+            f"Could not find base domain for {validation_name}. "
+            f"Please ensure _perform is called before _cleanup."
         )
+
+    def _get_cdmon_subdomain(self, validation_name):
+        """Get the CDmon subdomain from a validation name.
+        
+        This method extracts the subdomain part from a validation name,
+        removing the base domain and handling the _acme-challenge prefix.
+        
+        Args:
+            validation_name: The name of the DNS record to create/delete.
+            
+        Returns:
+            str: The subdomain part, or empty string for the root domain.
+        """
+        # Obtener el dominio base para este nombre de validación
+        base_domain = self._get_base_domain_for_validation(validation_name)
+        
+        # Eliminar el dominio base del nombre de validación
+        if validation_name.endswith("." + base_domain):
+            subdomain = validation_name[:-len(base_domain) - 1]
+        elif validation_name == base_domain:
+            subdomain = ""
+        else:
+            logger.warning(
+                "El nombre de validación %s no coincide con el dominio base %s",
+                validation_name, base_domain
+            )
+            return ""
+            
+        logger.debug(
+            "Subdominio extraído: '%s' de '%s' con dominio base '%s'",
+            subdomain, validation_name, base_domain
+        )
+        return subdomain
 
     def _format_acme_subdomain(self, subdomain):
-        """Format the subdomain with the ACME challenge prefix.
-
+        """Format a subdomain for ACME challenge.
+        
+        This method adds the _acme-challenge prefix to a subdomain if needed.
+        
         Args:
-            subdomain: The subdomain without the ACME challenge prefix.
-
+            subdomain: The subdomain part.
+            
         Returns:
-            str: The formatted subdomain with the ACME challenge prefix.
+            str: The formatted subdomain with _acme-challenge prefix.
         """
+        # Si el subdominio ya incluye el prefijo _acme-challenge, devolverlo tal cual
+        if subdomain.startswith(ACME_CHALLENGE_PREFIX):
+            return subdomain
+            
+        # Si el subdominio está vacío, devolver solo el prefijo
         if not subdomain:
-            formatted = ACME_CHALLENGE_PREFIX
-        else:
-            formatted = f"{ACME_CHALLENGE_PREFIX}.{subdomain}"
+            return ACME_CHALLENGE_PREFIX
             
-        logger.debug(
-            "Subdominio formateado con prefijo ACME: '%s'", formatted
-        )
-        return formatted
+        # En caso contrario, añadir el prefijo al subdominio
+        return f"{ACME_CHALLENGE_PREFIX}.{subdomain}"
 
-    def _find_txt_records(self, domain, subdomain, api_key):
-        """Find TXT records for a specific subdomain.
-
+    def _find_txt_records(self, domain, subdomain):
+        """Find TXT records for a domain and subdomain.
+        
+        This method queries the CDmon API to find TXT records for a domain
+        and subdomain.
+        
         Args:
-            domain: The base domain.
-            subdomain: The subdomain to search for.
-            api_key: The CDmon API key.
-
+            domain: The domain to query.
+            subdomain: The subdomain to filter by.
+            
         Returns:
-            list: A list of matching TXT records.
+            list: A list of TXT records.
         """
-        acme_subdomain = self._format_acme_subdomain(subdomain)
         logger.debug(
-            "Buscando registros TXT para %s.%s", acme_subdomain, domain
+            "Buscando registros TXT para dominio '%s' y subdominio '%s'",
+            domain, subdomain
         )
         
-        records = self._list_dns_records(domain, api_key)
-        
-        # Validar la respuesta de la API
-        if not isinstance(records, dict) or 'data' not in records:
-            logger.warning(
-                "Formato de respuesta inesperado de la API de CDmon: %s", 
-                records
-            )
-            return []
-            
-        result = records.get('data', {}).get('result', [])
-        if not isinstance(result, list):
-            logger.warning(
-                "Formato de resultado inesperado de la API de CDmon: %s", 
-                result
-            )
-            return []
-            
-        txt_records = [
-            record for record in result
-            if record.get('type') == 'TXT' and record.get('host') == acme_subdomain
-        ]
-        
-        logger.debug(
-            "Encontrados %d registros TXT para %s.%s", 
-            len(txt_records), acme_subdomain, domain
-        )
-        return txt_records
-
-    def _create_txt_record(self, subdomain, validation, validation_name):
-        """Create a TXT record using the CDmon API.
-
-        Args:
-            subdomain: The subdomain without the ACME challenge prefix.
-            validation: The validation content.
-            validation_name: The full validation name (used for domain detection).
-        """
-        api_key = self.credentials.conf("api_key")
-        domain = self._get_base_domain_for_validation(validation_name)
-        
-        acme_subdomain = self._format_acme_subdomain(subdomain)
-        txt_value = f'"{validation}"'
-        
-        logger.debug(
-            "Preparando para crear/actualizar registro TXT para %s.%s con valor %s",
-            acme_subdomain, domain, txt_value
-        )
-        
-        # Verificar si el registro ya existe
-        txt_records = self._find_txt_records(domain, subdomain, api_key)
-        
-        if txt_records:
-            logger.info(
-                "Actualizando registro TXT existente para %s.%s",
-                acme_subdomain, domain
-            )
-            self._edit_dns_txt_record(domain, acme_subdomain, txt_value, api_key)
-            logger.debug("Registro TXT actualizado correctamente")
-        else:
-            logger.info(
-                "Creando nuevo registro TXT para %s.%s",
-                acme_subdomain, domain
-            )
-            self._create_dns_txt_record(domain, acme_subdomain, txt_value, api_key)
-            logger.debug("Registro TXT creado correctamente")
-
-    def _delete_txt_record(self, subdomain, validation, validation_name):
-        """Delete a TXT record using the CDmon API.
-
-        Args:
-            subdomain: The subdomain without the ACME challenge prefix.
-            validation: The validation content.
-            validation_name: The full validation name (used for domain detection).
-        """
-        api_key = self.credentials.conf("api_key")
-        domain = self._get_base_domain_for_validation(validation_name)
-        
+        # Formatear el subdominio para el desafío ACME
         acme_subdomain = self._format_acme_subdomain(subdomain)
         
-        logger.debug(
-            "Preparando para eliminar registro TXT para %s.%s",
-            acme_subdomain, domain
-        )
-        
-        # Verificar si el registro existe
-        txt_records = self._find_txt_records(domain, subdomain, api_key)
-        
-        if txt_records:
-            logger.info(
-                "Eliminando registro TXT para %s.%s",
-                acme_subdomain, domain
-            )
-            self._delete_dns_txt_record(domain, acme_subdomain, api_key)
-            logger.debug("Registro TXT eliminado correctamente")
-        else:
-            logger.info(
-                "No se encontró registro TXT para %s.%s, nada que eliminar",
-                acme_subdomain, domain
-            )
-
-    def _make_api_request(self, endpoint, data, api_key):
-        """Make a request to the CDmon API with retry capability.
-
-        Args:
-            endpoint: The API endpoint to call.
-            data: The data to send in the request.
-            api_key: The CDmon API key.
-
-        Returns:
-            dict: The JSON response from the API.
-
-        Raises:
-            errors.PluginError: If there is an error making the API request.
-        """
-        headers = {
-            'Accept': 'application/json',
-            'apikey': api_key
+        # Construir la URL y los datos para la solicitud
+        url = f"{API_BASE_URL}/dns/records"
+        data = {
+            "domain": domain,
+            "token": self._api_key
         }
         
-        url = f'{API_BASE_URL}/{endpoint}'
-        logger.debug(
-            "Realizando solicitud a la API de CDmon: %s", url
-        )
-        logger.debug("Datos de la solicitud: %s", json.dumps(data))
-        
-        session = self._get_http_session()
-        
+        # Realizar la solicitud a la API
         try:
-            start_time = time.time()
-            response = session.post(
-                url,
-                headers=headers,
-                json=data,
-                timeout=30  # Añadir timeout para evitar bloqueos indefinidos
-            )
-            elapsed_time = time.time() - start_time
+            session = self._get_http_session()
+            response = session.post(url, json=data)
+            response.raise_for_status()
+            
+            # Procesar la respuesta
+            response_data = response.json()
+            if not response_data.get("success", False):
+                logger.error(
+                    "Error en la respuesta de la API: %s",
+                    response_data.get("message", "Unknown error")
+                )
+                return []
+                
+            # Filtrar los registros TXT que coinciden con el subdominio ACME
+            records = response_data.get("data", {}).get("records", [])
+            txt_records = [
+                record for record in records
+                if record.get("type") == "TXT" and record.get("name") == acme_subdomain
+            ]
             
             logger.debug(
-                "Respuesta de la API recibida en %.2f segundos, código: %d",
-                elapsed_time, response.status_code
+                "Encontrados %d registros TXT para %s.%s",
+                len(txt_records), acme_subdomain, domain
             )
+            return txt_records
             
-            response.raise_for_status()  # Lanzar excepción para códigos de error HTTP
-            
-            # Validar que la respuesta sea JSON válido
-            try:
-                result = response.json()
-                logger.debug(
-                    "Respuesta JSON válida recibida: %s", 
-                    json.dumps(result)[:200] + ('...' if len(json.dumps(result)) > 200 else '')
-                )
-                return result
-            except ValueError:
-                logger.error(
-                    "Respuesta JSON inválida de la API de CDmon: %s",
-                    response.text[:200] + ('...' if len(response.text) > 200 else '')
-                )
-                raise errors.PluginError(
-                    f"Invalid JSON response from CDmon API: {response.text}"
-                )
-                
-        except requests.exceptions.Timeout:
-            logger.error(
-                "Timeout al comunicarse con la API de CDmon (endpoint: %s)",
-                endpoint
-            )
-            raise errors.PluginError(f"Timeout communicating with CDmon API")
-        except requests.exceptions.ConnectionError:
-            logger.error(
-                "Error de conexión al comunicarse con la API de CDmon (endpoint: %s)",
-                endpoint
-            )
-            raise errors.PluginError(f"Connection error communicating with CDmon API")
-        except requests.exceptions.HTTPError as e:
-            logger.error(
-                "Error HTTP %d al comunicarse con la API de CDmon (endpoint: %s): %s",
-                e.response.status_code, endpoint, e.response.text
-            )
-            raise errors.PluginError(f"HTTP error from CDmon API: {e}")
         except requests.exceptions.RequestException as e:
             logger.error(
-                "Error al comunicarse con la API de CDmon (endpoint: %s): %s",
-                endpoint, str(e), exc_info=True
+                "Error al consultar registros DNS: %s", str(e), exc_info=True
             )
-            raise errors.PluginError(f"Error communicating with CDmon API: {e}")
+            return []
 
-    def _list_dns_records(self, domain, api_key):
-        """List DNS records for a domain.
-
+    def _create_txt_record(self, subdomain, validation, validation_name):
+        """Create a TXT record for validation.
+        
+        This method creates a TXT record with the validation content.
+        
         Args:
-            domain: The domain to list records for.
-            api_key: The CDmon API key.
-
-        Returns:
-            dict: The JSON response from the API.
+            subdomain: The subdomain part.
+            validation: The validation content.
+            validation_name: The full validation name (for logging).
+            
+        Raises:
+            errors.PluginError: If there is an error creating the record.
         """
-        logger.debug("Listando registros DNS para el dominio %s", domain)
-        data = {
-            'data': {
-                'domain': domain
-            }
-        }
-        return self._make_api_request('getDnsRecords', data, api_key)
+        logger.debug(
+            "Creando registro TXT para subdominio '%s' con valor '%s'",
+            subdomain, validation
+        )
+        
+        # Obtener el dominio base para este nombre de validación
+        domain = self._get_base_domain_for_validation(validation_name)
+        
+        # Formatear el subdominio para el desafío ACME
+        acme_subdomain = self._format_acme_subdomain(subdomain)
+        
+        # Verificar si ya existe un registro TXT para este subdominio
+        txt_records = self._find_txt_records(domain, subdomain)
+        
+        if txt_records:
+            # Si ya existe un registro, actualizarlo
+            record_id = txt_records[0].get("id")
+            logger.debug(
+                "Actualizando registro TXT existente con ID %s", record_id
+            )
+            self._edit_dns_txt_record(domain, acme_subdomain, validation, record_id)
+        else:
+            # Si no existe, crear uno nuevo
+            logger.debug("Creando nuevo registro TXT")
+            self._create_dns_txt_record(domain, acme_subdomain, validation)
 
-    def _create_dns_txt_record(self, domain, subdomain, value, api_key):
-        """Create a TXT record.
+    def _delete_txt_record(self, subdomain, validation, validation_name):
+        """Delete a TXT record used for validation.
+        
+        This method deletes a TXT record with the validation content.
+        
+        Args:
+            subdomain: The subdomain part.
+            validation: The validation content.
+            validation_name: The full validation name (for logging).
+            
+        Raises:
+            errors.PluginError: If there is an error deleting the record.
+        """
+        logger.debug(
+            "Eliminando registro TXT para subdominio '%s'",
+            subdomain
+        )
+        
+        # Obtener el dominio base para este nombre de validación
+        domain = self._get_base_domain_for_validation(validation_name)
+        
+        # Verificar si existe un registro TXT para este subdominio
+        txt_records = self._find_txt_records(domain, subdomain)
+        
+        if txt_records:
+            # Si existe un registro, eliminarlo
+            record_id = txt_records[0].get("id")
+            logger.debug(
+                "Eliminando registro TXT con ID %s", record_id
+            )
+            self._delete_dns_record(domain, record_id)
+        else:
+            # Si no existe, no hacer nada
+            logger.debug(
+                "No se encontró registro TXT para eliminar"
+            )
 
+    def _create_dns_txt_record(self, domain, name, content):
+        """Create a DNS TXT record via the CDmon API.
+        
         Args:
             domain: The domain to create the record for.
-            subdomain: The subdomain to create the record for.
-            value: The value of the TXT record.
-            api_key: The CDmon API key.
-
-        Returns:
-            dict: The JSON response from the API.
+            name: The name of the record.
+            content: The content of the record.
+            
+        Raises:
+            errors.PluginError: If there is an error creating the record.
         """
         logger.debug(
-            "Creando registro TXT para %s.%s con valor %s",
-            subdomain, domain, value
+            "Creando registro DNS TXT para dominio '%s', nombre '%s', contenido '%s'",
+            domain, name, content
         )
+        
+        # Construir la URL y los datos para la solicitud
+        url = f"{API_BASE_URL}/dns/record/add"
         data = {
-            'data': {
-                'domain': domain,
-                'type': 'TXT',
-                'ttl': DEFAULT_TTL,
-                'host': subdomain,
-                'value': value
-            }
+            "domain": domain,
+            "token": self._api_key,
+            "type": "TXT",
+            "name": name,
+            "content": content,
+            "ttl": DEFAULT_TTL
         }
-        return self._make_api_request('dnsrecords/create', data, api_key)
+        
+        # Realizar la solicitud a la API
+        try:
+            session = self._get_http_session()
+            response = session.post(url, json=data)
+            response.raise_for_status()
+            
+            # Procesar la respuesta
+            response_data = response.json()
+            if not response_data.get("success", False):
+                error_msg = response_data.get("message", "Unknown error")
+                logger.error(
+                    "Error al crear registro DNS: %s", error_msg
+                )
+                raise errors.PluginError(f"Error creating DNS record: {error_msg}")
+                
+            logger.info(
+                "Registro DNS TXT creado exitosamente"
+            )
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(
+                "Error al crear registro DNS: %s", str(e), exc_info=True
+            )
+            raise errors.PluginError(f"Error creating DNS record: {e}")
 
-    def _edit_dns_txt_record(self, domain, subdomain, value, api_key):
-        """Edit an existing TXT record.
-
+    def _edit_dns_txt_record(self, domain, name, content, record_id):
+        """Edit a DNS TXT record via the CDmon API.
+        
         Args:
             domain: The domain to edit the record for.
-            subdomain: The subdomain to edit the record for.
-            value: The new value of the TXT record.
-            api_key: The CDmon API key.
-
-        Returns:
-            dict: The JSON response from the API.
+            name: The name of the record.
+            content: The new content of the record.
+            record_id: The ID of the record to edit.
+            
+        Raises:
+            errors.PluginError: If there is an error editing the record.
         """
         logger.debug(
-            "Editando registro TXT para %s.%s con nuevo valor %s",
-            subdomain, domain, value
+            "Editando registro DNS TXT con ID %s para dominio '%s', nombre '%s', contenido '%s'",
+            record_id, domain, name, content
         )
-        current_record = {
-            'host': subdomain,
-            'type': 'TXT'
-        }
-        new_record = {
-            'ttl': DEFAULT_TTL,
-            'value': value
-        }
+        
+        # Construir la URL y los datos para la solicitud
+        url = f"{API_BASE_URL}/dns/record/edit"
         data = {
-            'data': {
-                'domain': domain,
-                'current': current_record,
-                'new': new_record
-            }
+            "domain": domain,
+            "token": self._api_key,
+            "type": "TXT",
+            "name": name,
+            "content": content,
+            "ttl": DEFAULT_TTL,
+            "id": record_id
         }
-        return self._make_api_request('dnsrecords/edit', data, api_key)
+        
+        # Realizar la solicitud a la API
+        try:
+            session = self._get_http_session()
+            response = session.post(url, json=data)
+            response.raise_for_status()
+            
+            # Procesar la respuesta
+            response_data = response.json()
+            if not response_data.get("success", False):
+                error_msg = response_data.get("message", "Unknown error")
+                logger.error(
+                    "Error al editar registro DNS: %s", error_msg
+                )
+                raise errors.PluginError(f"Error editing DNS record: {error_msg}")
+                
+            logger.info(
+                "Registro DNS TXT editado exitosamente"
+            )
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(
+                "Error al editar registro DNS: %s", str(e), exc_info=True
+            )
+            raise errors.PluginError(f"Error editing DNS record: {e}")
 
-    def _delete_dns_txt_record(self, domain, subdomain, api_key):
-        """Delete a TXT record.
-
+    def _delete_dns_record(self, domain, record_id):
+        """Delete a DNS record via the CDmon API.
+        
         Args:
             domain: The domain to delete the record from.
-            subdomain: The subdomain to delete the record from.
-            api_key: The CDmon API key.
-
-        Returns:
-            dict: The JSON response from the API.
+            record_id: The ID of the record to delete.
+            
+        Raises:
+            errors.PluginError: If there is an error deleting the record.
         """
         logger.debug(
-            "Eliminando registro TXT para %s.%s",
-            subdomain, domain
+            "Eliminando registro DNS con ID %s para dominio '%s'",
+            record_id, domain
         )
+        
+        # Construir la URL y los datos para la solicitud
+        url = f"{API_BASE_URL}/dns/record/delete"
         data = {
-            'data': {
-                'domain': domain,
-                'host': subdomain,
-                'type': 'TXT'
-            }
+            "domain": domain,
+            "token": self._api_key,
+            "id": record_id
         }
-        return self._make_api_request('dnsrecords/delete', data, api_key)
+        
+        # Realizar la solicitud a la API
+        try:
+            session = self._get_http_session()
+            response = session.post(url, json=data)
+            response.raise_for_status()
+            
+            # Procesar la respuesta
+            response_data = response.json()
+            if not response_data.get("success", False):
+                error_msg = response_data.get("message", "Unknown error")
+                logger.error(
+                    "Error al eliminar registro DNS: %s", error_msg
+                )
+                raise errors.PluginError(f"Error deleting DNS record: {error_msg}")
+                
+            logger.info(
+                "Registro DNS eliminado exitosamente"
+            )
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(
+                "Error al eliminar registro DNS: %s", str(e), exc_info=True
+            )
+            raise errors.PluginError(f"Error deleting DNS record: {e}")
