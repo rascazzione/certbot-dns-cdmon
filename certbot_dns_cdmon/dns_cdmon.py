@@ -42,12 +42,10 @@ class Authenticator(dns_common.DNSAuthenticator):
         )
 
     def _perform(self, domain, validation_name, validation):
-        """
-        Perform a dns-01 challenge by creating a TXT record.
-        """
         try:
             subdomain = self._get_cdmon_subdomain(validation_name)
             self._create_txt_record(subdomain, validation)
+            time.sleep(self.conf('propagation-seconds') or 90)  # Add propagation delay here
         except Exception as e:
             raise errors.PluginError(f"Error creating TXT record: {e}")
 
@@ -120,22 +118,18 @@ class Authenticator(dns_common.DNSAuthenticator):
             self._delete_dns_txt_record(domain, acme_subdomain, api_key)
 
     def _make_api_request(self, endpoint, data, api_key):
-        """
-        Make a request to the CDmon API.
-        """
-        headers = {
-            'Accept': 'application/json',
-            'apikey': api_key
-        }
-        response = requests.post(
-            f'https://api-domains.cdmon.services/api-domains/{endpoint}', 
-            headers=headers, 
-            json=data
-        )
+        headers = {'Accept': 'application/json', 'apikey': api_key}
+        response = requests.post(f'https://api-domains.cdmon.services/api-domains/{endpoint}', headers=headers, json=data)
         if response.status_code == 200:
             return response.json()
         else:
-            raise errors.PluginError(f"CDmon API error: {response.status_code} - {response.text}")
+            # Extract error message from JSON response if available
+            try:
+                error_data = response.json()
+                error_msg = error_data.get('message', response.text)
+            except json.JSONDecodeError:
+                error_msg = response.text
+            raise errors.PluginError(f"CDmon API error: {response.status_code} - {error_msg}")
 
     def _list_dns_records(self, domain, api_key):
         """
