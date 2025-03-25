@@ -2,6 +2,11 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
+__pycache__/
+*.egg-info/
+dist/
+build/
 
 # C extensions
 *.so
@@ -24,6 +29,7 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+
 
 # PyInstaller
 #  Usually these files are written by a PyInstaller build script
