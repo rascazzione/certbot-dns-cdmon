@@ -1,28 +1,26 @@
-from setuptools import setup
-from setuptools import find_packages
+from setuptools import setup, find_packages
+from pathlib import Path
 
-version = '0.3.1'
-
-install_requires = [
-    'certbot>=1.1.0',
-    'setuptools>=41.6.0',
-    'requests',
-]
+# Read the README.md content
+this_directory = Path(__file__).parent
+long_description = (this_directory / "README.md").read_text()
 
 setup(
     name='certbot-dns-cdmon',
-    version=version,
+    version='0.3.2',
     description="CDmon DNS Authenticator plugin for Certbot",
+    long_description=long_description,
+    long_description_content_type='text/markdown',
     url='https://github.com/rascazzione/certbot-dns-cdmon',
     author="rascazzione",
     author_email='rascazzione@example.com',
-    license='Apache License 2.0',
+    license='MIT',
+    include_package_data=True,
     python_requires='>=3.6',
     classifiers=[
         'Development Status :: 3 - Alpha',
         'Environment :: Plugins',
         'Intended Audience :: System Administrators',
-        'License :: OSI Approved :: Apache Software License',
         'Operating System :: POSIX :: Linux',
         'Programming Language :: Python',
         'Programming Language :: Python :: 3',
@@ -38,8 +36,10 @@ setup(
         'Topic :: Utilities',
     ],
     packages=find_packages(),
-    include_package_data=True,
-    install_requires=install_requires,
+    install_requires=[
+        'certbot>=1.1.0',
+        'requests',
+    ],
     entry_points={
         'certbot.plugins': [
             'dns-cdmon = certbot_dns_cdmon.dns_cdmon:Authenticator',

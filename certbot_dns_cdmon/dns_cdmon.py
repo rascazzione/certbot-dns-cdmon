@@ -45,7 +45,7 @@ class Authenticator(dns_common.DNSAuthenticator):
         try:
             subdomain = self._get_cdmon_subdomain(validation_name)
             self._create_txt_record(subdomain, validation)
-            time.sleep(self.conf('propagation-seconds') or 90)  # Add propagation delay here
+            time.sleep(self.conf('propagation-seconds') or 10)  # Add propagation delay here
         except Exception as e:
             raise errors.PluginError(f"Error creating TXT record: {e}")
 

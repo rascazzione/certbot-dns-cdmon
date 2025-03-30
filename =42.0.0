@@ -1,0 +1,10 @@
+Requirement already satisfied: setuptools in /home/jupyter/miniconda3/lib/python3.12/site-packages (75.1.0)
+Collecting setuptools
+  Using cached setuptools-78.1.0-py3-none-any.whl.metadata (6.6 kB)
+Using cached setuptools-78.1.0-py3-none-any.whl (1.3 MB)
+Installing collected packages: setuptools
+  Attempting uninstall: setuptools
+    Found existing installation: setuptools 75.1.0
+    Uninstalling setuptools-75.1.0:
+      Successfully uninstalled setuptools-75.1.0
+Successfully installed setuptools-78.1.0
