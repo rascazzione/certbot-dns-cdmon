@@ -78,7 +78,7 @@ Example configuration:
 ```ini
 # CDmon API credentials
 dns_cdmon_api_key = your_api_key_here
-dns_cdmon_domain = your_domain_here
+dns_cdmon_domain = your_domain_here  # Optional: Only needed if you want to override automatic domain detection
 ```
 
 Security best practices:
@@ -153,7 +153,7 @@ Certbot will remember the plugin used. The renewal will be automatic without nee
 - Check credentials file format:
   ```ini
   dns_cdmon_api_key = your_api_key
-  dns_cdmon_domain = yourdomain.com
+  dns_cdmon_domain = yourdomain.com  # Optional
   ```
 
 #### 3. Propagation Issues

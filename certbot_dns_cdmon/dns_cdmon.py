@@ -37,14 +37,16 @@ class Authenticator(dns_common.DNSAuthenticator):
             "CDmon API credentials INI file",
             {
                 "api_key": "API key for CDmon API",
-                "domain": "Base domain managed by CDmon",
+                "domain": "Base domain managed by CDmon (optional)",
             }
         )
 
     def _perform(self, domain, validation_name, validation):
         try:
-            subdomain = self._get_cdmon_subdomain(validation_name)
-            self._create_txt_record(subdomain, validation)
+            logger.info(f"Performing validation for {validation_name}")
+            subdomain_info = self._get_cdmon_subdomain(validation_name)
+            logger.info(f"Extracted subdomain info: {subdomain_info}")
+            self._create_txt_record(subdomain_info, validation)
             time.sleep(self.conf('propagation-seconds') or 10)  # Add propagation delay here
         except Exception as e:
             raise errors.PluginError(f"Error creating TXT record: {e}")
@@ -54,30 +56,84 @@ class Authenticator(dns_common.DNSAuthenticator):
         Clean up the TXT record which would have been created by _perform.
         """
         try:
-            subdomain = self._get_cdmon_subdomain(validation_name)
-            self._delete_txt_record(subdomain, validation)
+            logger.info(f"Cleaning up validation for {validation_name}")
+            subdomain_info = self._get_cdmon_subdomain(validation_name)
+            logger.info(f"Extracted subdomain info for cleanup: {subdomain_info}")
+            self._delete_txt_record(subdomain_info, validation)
         except Exception as e:
             logger.warning(f"Error cleaning up TXT record: {e}")
 
     def _get_cdmon_subdomain(self, validation_name):
-        domain = self.credentials.conf("domain")
-        if validation_name.endswith(domain):
-            subdomain = validation_name[:-len(domain)-1]  # Remueve el dominio y el punto
-            # Si empieza con '_acme-challenge.' se elimina ese prefijo
-            if subdomain.startswith("_acme-challenge."):
-                subdomain = subdomain[len("_acme-challenge."):]
-            elif subdomain == "_acme-challenge":
-                subdomain = ""
-            return subdomain
-        return ""
+        """
+        Extract the subdomain and domain from the validation name.
+        Returns a tuple of (subdomain, domain).
+        """
+        logger.info(f"Processing validation name: {validation_name}")
+        
+        # Remove _acme-challenge prefix if present
+        if validation_name.startswith("_acme-challenge."):
+            domain_name = validation_name[len("_acme-challenge."):]
+            logger.info(f"Removed _acme-challenge prefix, domain_name: {domain_name}")
+        else:
+            domain_name = validation_name
+            logger.info(f"No _acme-challenge prefix found, domain_name: {domain_name}")
+            
+        # Try to use domain from credentials if available and matches
+        config_domain = self.credentials.conf("domain")
+        if config_domain and domain_name.endswith(config_domain):
+            logger.info(f"Using configured domain: {config_domain}")
+            # Extract subdomain using the configured domain
+            if domain_name == config_domain:
+                # It's the apex domain
+                logger.info(f"Apex domain detected, returning: ('', {config_domain})")
+                return ("", config_domain)
+            else:
+                # It's a subdomain
+                subdomain = domain_name[:-len(config_domain)-1]  # Remove domain and dot
+                logger.info(f"Subdomain detected, returning: ('{subdomain}', {config_domain})")
+                return (subdomain, config_domain)
+        
+        # If we don't have a matching configured domain, extract domain from validation_name
+        parts = domain_name.split('.')
+        logger.info(f"Domain parts: {parts}")
+        
+        if len(parts) <= 1:
+            # Single part domain, use as is
+            logger.info(f"Single part domain, returning: ('', {domain_name})")
+            return ("", domain_name)
+            
+        # For multi-part domains, assume the last two parts form the domain
+        if len(parts) == 2:
+            # It's likely the apex domain (example.com)
+            logger.info(f"Two-part domain, returning: ('', {domain_name})")
+            return ("", domain_name)
+        else:
+            # It's likely a subdomain (sub.example.com)
+            domain = '.'.join(parts)  # Use the full domain
+            subdomain = ""  # No subdomain
+            if len(parts) > 2:
+                # Extract subdomain and domain
+                domain = '.'.join(parts[-2:])  # Last two parts for domain
+                subdomain = '.'.join(parts[:-2])  # Everything else for subdomain
+            
+            logger.info(f"Multi-part domain, returning: ('{subdomain}', {domain})")
+            return (subdomain, domain)
 
 
-    def _create_txt_record(self, subdomain, validation):
+    def _create_txt_record(self, subdomain_info, validation):
         """
         Create a TXT record using the CDmon API.
         """
         api_key = self.credentials.conf("api_key")
-        domain = self.credentials.conf("domain")
+        subdomain, domain = subdomain_info
+        
+        if not domain:
+            # If no domain was extracted, try to use the one from credentials
+            domain = self.credentials.conf("domain")
+            if not domain:
+                raise errors.PluginError("No domain specified in credentials or validation name")
+        
+        logger.info(f"Using domain: {domain} for TXT record")
         
         if subdomain == "_acme-challenge":
             acme_subdomain = "_acme-challenge"
@@ -98,12 +154,21 @@ class Authenticator(dns_common.DNSAuthenticator):
             logger.info(f"Creating new TXT record for {acme_subdomain}.{domain}")
             self._create_dns_txt_record(domain, acme_subdomain, txt_value, api_key)
 
-    def _delete_txt_record(self, subdomain, validation):
+    def _delete_txt_record(self, subdomain_info, validation):
         """
         Delete a TXT record using the CDmon API.
         """
         api_key = self.credentials.conf("api_key")
-        domain = self.credentials.conf("domain")
+        subdomain, domain = subdomain_info
+        
+        if not domain:
+            # If no domain was extracted, try to use the one from credentials
+            domain = self.credentials.conf("domain")
+            if not domain:
+                logger.warning("No domain specified in credentials or validation name, skipping cleanup")
+                return
+        
+        logger.info(f"Using domain: {domain} for deleting TXT record")
         
         # Format the subdomain for CDmon API
         acme_subdomain = f"_acme-challenge.{subdomain}" if subdomain else "_acme-challenge"

@@ -7,13 +7,13 @@ long_description = (this_directory / "README.md").read_text()
 
 setup(
     name='certbot-dns-cdmon',
-    version='0.3.2',
+    version='0.4.0',
     description="CDmon DNS Authenticator plugin for Certbot",
     long_description=long_description,
     long_description_content_type='text/markdown',
     url='https://github.com/rascazzione/certbot-dns-cdmon',
     author="rascazzione",
-    author_email='rascazzione@example.com',
+    author_email='rascazzione@gmail.com',
     license='MIT',
     include_package_data=True,
     python_requires='>=3.6',
